@@ -3,14 +3,24 @@
 HYSTERESIS=6000   # in mK
 SLEEP_INTERVAL=1  # in s
 
+#pwm which is enough to start all 3 fans from 0
+MIN_COLD_START_PWM=92
+
+FANSTOP_BELOW_TEMP=32000
+RESTART_FANS_ABOVE=40000
+IS_FANSTOPPED=0
+
+
+#82 PWM is absolute minimum, below that the fan stops turning
+
 # set temps (in degrees C * 1000) and corresponding pwm values in ascending order and with the same amount of values
-TEMPS=( 65000 80000 90000 )
-PWMS=(      0   153   255 )
+TEMPS=(40000 45000 55000 65000 80000 83000 )
+PWMS=( 82 90 110 130 150 255 )
 
 # hwmon paths, hardcoded for one amdgpu card at hwmon0, adjust as needed
-FILE_PWM=/sys/class/drm/card0/device/hwmon/hwmon0/pwm1
-FILE_FANMODE=/sys/class/drm/card0/device/hwmon/hwmon0/pwm1_enable
-FILE_TEMP=/sys/class/drm/card0/device/hwmon/hwmon0/temp1_input
+FILE_PWM=/sys/class/drm/card0/device/hwmon/hwmon3/pwm1
+FILE_FANMODE=/sys/class/drm/card0/device/hwmon/hwmon3/pwm1_enable
+FILE_TEMP=/sys/class/drm/card0/device/hwmon/hwmon3/temp1_input
 # might want to use this later
 #FILE_TEMP_CRIT=/sys/class/hwmon/hwmon0/temp1_crit_hyst
 
@@ -58,11 +68,45 @@ function set_pwm {
   fi
 }
 
+function set_pwm_force {
+  NEW_PWM=$1
+  OLD_PWM=$(cat $FILE_PWM)
+
+  echo "FORCE current pwm: $OLD_PWM, requested to set pwm to $NEW_PWM"
+  if [ $(cat ${FILE_FANMODE}) -ne 1 ]
+  then
+    echo "Fanmode not set to manual."
+    set_fanmode 1
+  fi
+
+    echo "changing pwm to $NEW_PWM"
+    echo "$NEW_PWM" > "$FILE_PWM"
+}
+
 function interpolate_pwm {
   i=0
   TEMP=$(cat $FILE_TEMP)
 
   echo "current temp: $TEMP"
+
+#	if [[ $TEMP -le $FANSTOP_BELOW_TEMP ]]; then
+#		echo "fanstop active"
+#		IS_FANSTOPPED=1
+#		set_pwm_force 0
+#		return
+#	fi
+
+#	if [[ $TEMP -ge $RESTART_FANS_ABOVE ]]; then
+#		if [[ $IS_FANSTOPPED -gt 0 ]]; then
+#			echo "restarting fans"
+##			IS_FANSTOPPED=0
+#			set_pwm_force $MIN_COLD_START_PWM
+#			set_pwm 82
+#			set_pwm_force 82
+#			return
+#		fi
+#	fi
+
 
   if [[ $TEMP -le ${TEMPS[0]} ]]; then
     # below first point in list, set to min speed
@@ -110,6 +154,12 @@ function run_daemon {
 
 # set fan control to manual
 set_fanmode 1
+
+echo "kickstarting fans..."
+echo $MIN_COLD_START_PWM > "$FILE_PWM"
+IS_FANSTOPPED=1
+sleep 2
+
 
 # finally start the loop
 run_daemon
